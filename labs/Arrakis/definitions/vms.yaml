@@ -1,0 +1,9 @@
+vms:
+    - vm:
+        name: "Arrakis"
+        vmid: 103
+        newid: 1001
+    - vm:
+        name: "Harkonnen"
+        vmid: 101
+        newid: 1002

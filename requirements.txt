@@ -1,3 +1,4 @@
 proxmoxer
 getpass4
 console-menu
+pyyaml
