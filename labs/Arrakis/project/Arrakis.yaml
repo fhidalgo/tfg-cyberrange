@@ -1,0 +1,6 @@
+- name: Máquina Arrakis
+  hosts: linux
+  
+  tasks:
+  - name: Ping
+    ping:

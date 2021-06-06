@@ -1,0 +1,13 @@
+[Arrakis]
+Arrakis-basevm ansible_ssh_host=10.0.0.3
+
+[Harkonnen]
+Harkonnen-basevm ansible_ssh_host=10.0.0.4
+
+[Harkonnen:vars]
+ansible_user=manager
+ansible_password=manager
+ansible_connection=winrm
+ansible_port=5985
+ansible_winrm_transport=ntlm
+ansible_winrm_server_cert_validation=ignore

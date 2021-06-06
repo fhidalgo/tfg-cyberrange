@@ -33,3 +33,10 @@ def vm_list(vmlist):
     vms.sort()
     
     return vms
+
+# Función que devuelve una VM concreta a partir de su vmid dentro de un listado de VMs
+def get_vm(vmlist, vmid):
+    for vm in vmlist:
+        if str(vm['vmid']) == str(vmid):
+            return ProxmoxVM(vm['vmid'],vm['status'],vm['name'],vm['template'])
+    return None

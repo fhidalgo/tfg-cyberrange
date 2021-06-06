@@ -12,10 +12,13 @@ from texttable import Texttable
 from optparse import OptionParser
 from consolemenu import *
 from consolemenu.items import *
+import ansible_runner
 import yaml
 import traceback
 import proxmoxutils
 import os
+import time
+import shutil
 
 # El parseador de opciones configura las diferentes opciones que el usuario puede incluir en la ejecución del script.
 options = OptionParser(usage='%prog [opciones]', description='Gestiona el despliegue de máquinas virtuales en el ciberrange')
@@ -48,6 +51,7 @@ def connectorStatus():
     else:
         return 2
 
+# Si no se proporciona una contraseña en los argumentos, se solicitará por consola.
 def getPassword():
     if opts.password:
         return opts.password
@@ -85,7 +89,7 @@ def listVMs(type):
     except:
         traceback.print_exc()
     
-    print('\n Pulse enter para volver')
+    print('\nPulse enter para volver')
     input()
     return
 
@@ -101,23 +105,144 @@ def listStorage():
         if element['format'] == 'iso':
             t.add_row([element['volid'].split('/')[1], element['size']/(1024*1024)])
     print(t.draw())
-    print('\n Pulse enter para volver')
+    print('\nPulse enter para volver')
     input()
     return
 
+# Borra las máquinas de un laboratorio a partir de los ficheros de configuración contenidos en la carpeta del mismo nombre.
+def delete_lab(lab_name):
+    try:
+        errors = 0
+        changes = 0
+        # Rutas de directorios
+        sourcepath = os.path.relpath('labs')
+        # Ruta del fichero de definiciones de VMs
+        vmspath = os.path.join(sourcepath, lab_name, 'definitions', 'vms.yaml')
+
+        print('\n[!] - Comienza la destrucción del laboratorio:', lab_name)
+
+        with open(vmspath, mode='r') as file:
+            vms = yaml.load(file, Loader=yaml.FullLoader)
+
+        print('\n[!] - Borrado de máquinas virtuales:')
+        for delvm in vms['vms']:
+            delvm = delvm['vm']
+            vm = proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), delvm['newid'])
+            if vm is None:
+                print('\n[x] - No puede eliminarse la máquina', delvm['name'], 'porque no existe en el servidor.')
+                errors = errors + 1
+            else:
+                running = 0
+                if proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), delvm['newid']).status == 'running':
+                    running = 1
+                    for i in range(3):
+                        print('\n[!] - Apagando máquina:', delvm['name'], '. Intento',i+1, 'de 3.')
+                        proxmox.nodes(opts.node).qemu(delvm['newid']).status.shutdown.post(forceStop='1')
+                        for j in range(30):
+                            time.sleep(1)
+                            if proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), delvm['newid']).status == 'stopped':
+                                running = 0
+                                break
+                        if running == 0:
+                            break
+                if running == 0:
+                    print('\n[!] - Eliminando máquina:', delvm['name'])
+                    proxmox.nodes(opts.node).qemu(delvm['newid']).delete(purge='1')
+                    time.sleep(5)
+                    if proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), delvm['newid']) is None:
+                        print('\n[!] - La máquina', delvm['name'], 'ha sido eliminada con éxito')
+                        changes = changes + 1
+                    else:
+                        print('\n[x] - No pudo eliminarse la máquina', delvm['name'])
+                        errors = errors + 1
+                else:
+                    print('\n[x] - No se pudo detener la máquina:', delvm['name'])
+                    errors = errors + 1
+    except:
+        traceback.print_exc()
+        errors = errors + 1
+    finally:
+        if errors > 0:
+            print('\n[!] - Ha finalizado la destrucción del laboratorio con errores')
+        else:
+            print('\n[!] - Ha finalizado la destrucción del laboratorio correctamente. Se han borrado', changes, 'máquinas.')
+        print('\nPulse enter para volver')
+        input()
+    return
+
+
+# Lanza un laboratorio a partir de los ficheros de configuración contenidos en la carpeta del mismo nombre.
 def launch_lab(lab_name):
     # Clonación de VMs
     try:
-        with open('.\\labs\\' + lab_name + '\\definitions\\vms.yaml', mode='r') as file:
+        errors = 0
+        # Rutas de directorios
+        sourcepath = os.path.relpath('labs')
+
+        # Ruta del fichero de inventario de Ansible
+        inventorypath = os.path.join(sourcepath, lab_name, 'inventory', 'hosts')
+
+        # Ruta del fichero de definiciones de VMs
+        vmspath = os.path.join(sourcepath, lab_name, 'definitions', 'vms.yaml')
+
+        print('\n[!] - Comienza el despliegue del laboratorio:', lab_name) 
+                    
+        with open(vmspath, mode='r') as file:
             vms = yaml.load(file, Loader=yaml.FullLoader)
 
-        for vm in vms['vms']:
-            vm = vm['vm']
-            proxmox.nodes(opts.node).qemu(vm['vmid']).clone.create(newid=vm['newid'], name=vm['name'], vmid=vm['vmid'])
+        print('\n[!] - Clonado de máquinas virtuales:')
+        for newvm in vms['vms']:
+            newvm = newvm['vm']
+
+            vm = proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), newvm['vmid'])
+            if vm is None:
+                print('\n[x] - No puede clonarse la máquina', newvm['name'], 'a partir de la máquina base', newvm['vmid'], 'porque no existe en el servidor.')
+                errors = errors + 1
+            else:
+                if vm.template != 1:
+                    print('\n[x] - No puede clonarse la máquina', newvm['name'], 'a partir de la máquina base', newvm['vmid'], 'porque no es un template.')
+                    errors = errors + 1
+                else:
+                    print('\n[!] - Clonando la máquina virtual', newvm['name'])
+                    proxmox.nodes(opts.node).qemu(newvm['vmid']).clone.create(newid=newvm['newid'], name=newvm['name'], vmid=newvm['vmid'])
+                    time.sleep(5)
+
+                    running = 0
+                    for i in range(3):
+                        print('\n[!] - Esperando que la máquina', newvm['name'],'se inicie. Intento:', i+1)
+                        proxmox.nodes(opts.node).qemu(newvm['newid']).status.start.post()
+                        for j in range(5):
+                            time.sleep(1)
+                            if proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), newvm['newid']).status == 'running':
+                                running = 1
+                                break
+                        if running == 1: break
+                    if running == 0:
+                        print('\n[x] - No pudo iniciarse la máquina', newvm['name'], '. No se ejecutará el plabook de Ansible para su configuración.')
+                        errors = errors + 1
+                    else:
+                        playbookname = newvm['name'] + '.yaml'
+                        playbookpath = os.path.join(sourcepath, lab_name, 'project', playbookname)
+                        if os.path.exists(playbookpath):
+                            print('\n[!] - La máquina', newvm['name'], 'se ha desplegado con éxito. Ejecutando playbook de Ansible...')
+                            time.sleep(30)
+                            r = ansible_runner.run(private_data_dir=os.path.join(sourcepath, lab_name), playbook=playbookname)
+                            print(r.stats)
+                        else:
+                            print('\n[!] - No existe playbook de Ansible para la máquina', newvm['name'], '. Se omite este paso')
+        # Limpieza del directorio 'artifacts'
+        artifactspath = os.path.join(sourcepath, lab_name, 'artifacts')
+        if os.path.exists(artifactspath): 
+            shutil.rmtree(artifactspath)
     except:
         traceback.print_exc()
+        errors = errors + 1
     finally:
-        print('\n Pulse enter para volver')
+        if errors > 0:
+            print('\n[!] - Ha finalizado la ejecución del laboratorio con errores')
+        else:
+            print('\n[!] - Ha finalizado la ejecución del laboratorio correctamente')
+        print('\nPulse enter para volver')
         input()
     return
 
@@ -133,13 +258,18 @@ def mainMenu():
     # Menú para lanzar laboratorios.
     launch_lab_submenu = ConsoleMenu("Lanzar laboratorio")
 
-    for dir in next(os.walk('.\labs'))[1]:
+    # Menú para borrar laboratorios.
+    delete_lab_submenu = ConsoleMenu("Destruir laboratorio")
+
+    for dir in next(os.walk(os.path.relpath('labs')))[1]:
         launch_lab_submenu.append_item(FunctionItem(dir, launch_lab, [dir]))
+        delete_lab_submenu.append_item(FunctionItem(dir, delete_lab, [dir]))
 
     # Adjuntamos los elementos al menú principal para que se muestren.
     main_menu.append_item(SubmenuItem("Ver máquinas virtuales", list_vms_submenu, main_menu))
     main_menu.append_item(FunctionItem("Ver ISOs", listStorage))
     main_menu.append_item(SubmenuItem("Lanzar laboratorios", launch_lab_submenu, main_menu))
+    main_menu.append_item(SubmenuItem("Destruir laboratorios", delete_lab_submenu, main_menu))
 
     # Llamamos a la función para mostrar en pantalla el menú.
     main_menu.show()

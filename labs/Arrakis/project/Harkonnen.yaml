@@ -1,0 +1,10 @@
+- name: Máquina Harkonnen
+  hosts: Harkonnen
+
+  tasks:
+  - name: Cambia el hostname.
+    win_command: wmic computersystem where caption='windows7-basevm' rename 'Harkonnen'
+    register: rename_out
+  
+  - name: Reinicia el equipo para validar los cambios.
+    win_reboot:

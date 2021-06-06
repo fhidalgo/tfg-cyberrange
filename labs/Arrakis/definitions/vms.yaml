@@ -5,5 +5,9 @@ vms:
         newid: 1001
     - vm:
         name: "Harkonnen"
-        vmid: 101
+        vmid: 104
         newid: 1002
+    - vm:
+        name: "Esto causará un error"
+        vmid: 666
+        newid: 9999
