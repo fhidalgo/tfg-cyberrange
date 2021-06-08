@@ -190,6 +190,8 @@ def launch_lab(lab_name):
         with open(vmspath, mode='r') as file:
             vms = yaml.load(file, Loader=yaml.FullLoader)
 
+        created_vms = []
+
         print('\n[!] - Clonado de máquinas virtuales:')
         for newvm in vms['vms']:
             newvm = newvm['vm']
@@ -217,19 +219,44 @@ def launch_lab(lab_name):
                                 running = 1
                                 break
                         if running == 1: break
-                    if running == 0:
-                        print('\n[x] - No pudo iniciarse la máquina', newvm['name'], '. No se ejecutará el plabook de Ansible para su configuración.')
-                        errors = errors + 1
+                    if running == 1:
+                        print('\n[!] - La máquina', newvm['name'], 'se ha desplegado con éxito.')
+                        created_vms.append(newvm)
                     else:
-                        playbookname = newvm['name'] + '.yaml'
-                        playbookpath = os.path.join(sourcepath, lab_name, 'project', playbookname)
-                        if os.path.exists(playbookpath):
-                            print('\n[!] - La máquina', newvm['name'], 'se ha desplegado con éxito. Ejecutando playbook de Ansible...')
-                            time.sleep(30)
-                            r = ansible_runner.run(private_data_dir=os.path.join(sourcepath, lab_name), playbook=playbookname)
-                            print(r.stats)
-                        else:
-                            print('\n[!] - No existe playbook de Ansible para la máquina', newvm['name'], '. Se omite este paso')
+                        print('\n[x] - Ocurrió algún error al tratar de arrancar la máquina', newvm['name'])
+                        errors = errors + 1
+
+        print('\n[!] - Ejecución de playbooks de Ansible:')
+
+        for newvm in created_vms:
+
+            if proxmoxutils.get_vm(proxmox.nodes(opts.node).qemu.get(), newvm['newid']).status == 'running':
+                playbookname = newvm['name'] + '.yaml'
+                playbookpath = os.path.join(sourcepath, lab_name, 'project', playbookname)
+                if os.path.exists(playbookpath):
+                    print('\n[!] - Esperando a que la máquina', newvm['name'], 'responda al ping...(máximo 1 minuto)')
+                    
+                    i = 0
+                    while i < 6:
+                        time.sleep(10)
+                        response = os.system('ping -c 1 ' + newvm['ip'])
+                        if response == 0: break
+                        i = i + 1
+
+                    if i == 5:
+                        print('\n[x] - Error. Se ha superado el tiempo máximo de espera. La máquina', newvm['name'], 'no responde.')
+                        errors = errors + 1
+                        continue
+                    
+                    print('\n[!] - Ejecutando el playbook de ansible para la máquina', newvm['name'])
+                    r = ansible_runner.run(private_data_dir=os.path.join(sourcepath, lab_name), playbook=playbookname)
+                    print(r.stats)
+                else:
+                    print('\n[!] - No existe playbook de Ansible para la máquina', newvm['name'], '. Se omite este paso')
+            else:
+                print('\n[x] - La máquina', newvm['name'], '. No se encuentra arrancada. No se ejecutará el plabook de Ansible para su configuración.')
+                errors = errors + 1
+       
         # Limpieza del directorio 'artifacts'
         artifactspath = os.path.join(sourcepath, lab_name, 'artifacts')
         if os.path.exists(artifactspath): 

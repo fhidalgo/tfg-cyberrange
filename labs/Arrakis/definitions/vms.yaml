@@ -3,11 +3,14 @@ vms:
         name: "Arrakis"
         vmid: 103
         newid: 1001
+        ip: 10.0.0.3
     - vm:
         name: "Harkonnen"
         vmid: 104
         newid: 1002
+        ip: 10.0.0.4
     - vm:
         name: "Esto causará un error"
         vmid: 666
         newid: 9999
+        ip: 0.0.0.0
